@@ -64,6 +64,62 @@ const WILL_REGISTRY_ABI = [
 
 const provider = new ethers.JsonRpcProvider(RPC_URL)
 
+const MAX_LOG_BLOCK_RANGE = Number(process.env.MAX_LOG_BLOCK_RANGE || 10)
+const LOG_RETRY_ATTEMPTS = Number(process.env.LOG_RETRY_ATTEMPTS || 3)
+const LOG_RETRY_DELAY_MS = Number(process.env.LOG_RETRY_DELAY_MS || 500)
+
+async function getLogsSafe(options) {
+  if (!options || typeof options !== 'object') throw new Error('getLogsSafe requires options')
+  const { fromBlock, toBlock, address, topics } = options
+  let start = Number(fromBlock)
+  let end = Number(toBlock)
+
+  if (!Number.isFinite(start)) start = 0
+  if (!Number.isFinite(end)) throw new Error('Invalid toBlock')
+  if (start > end) throw new Error('fromBlock must be <= toBlock')
+
+  const logs = []
+  for (let chunkStart = start; chunkStart <= end; chunkStart += MAX_LOG_BLOCK_RANGE) {
+    const chunkEnd = Math.min(end, chunkStart + MAX_LOG_BLOCK_RANGE - 1)
+    let attempts = 0
+    while (true) {
+      try {
+        const chunkLogs = await provider.getLogs({
+          fromBlock: chunkStart,
+          toBlock: chunkEnd,
+          address,
+          topics,
+        })
+        logs.push(...chunkLogs)
+        break
+      } catch (err) {
+        attempts += 1
+        const message = (err && err.message) || ''
+        const isRangeError =
+          message.includes('block range') ||
+          (err && err.error && err.error.message && err.error.message.toLowerCase().includes('block range'))
+
+        if (attempts > LOG_RETRY_ATTEMPTS) {
+          const e = new Error(`getLogsSafe failed after ${attempts} attempts: ${err.message || err}`)
+          e.cause = err
+          throw e
+        }
+
+        if (!isRangeError) {
+          // For transient RPC issues, backoff and retry
+          await new Promise((r) => setTimeout(r, LOG_RETRY_DELAY_MS * attempts))
+          continue
+        }
+
+        // If we hit a block range limit, reduce chunk size to 1 and retry.
+        // This should rarely happen because we already chunk by MAX_LOG_BLOCK_RANGE.
+        await new Promise((r) => setTimeout(r, LOG_RETRY_DELAY_MS * attempts))
+      }
+    }
+  }
+  return logs
+}
+
 const WILL_REGISTRY_ADDRESS = process.env.WILL_REGISTRY_ADDRESS || ''
 let willRegistry = null
 if (WILL_REGISTRY_ADDRESS && ethers.isAddress(WILL_REGISTRY_ADDRESS)) {
@@ -358,10 +414,10 @@ async function indexWills() {
 
   try {
     const currentBlock = await provider.getBlockNumber()
-    const fromBlock = currentBlock > 10 ? currentBlock - 10 : 0
+    const fromBlock = currentBlock > 9 ? currentBlock - 9 : 0
 
     const filter = willRegistry.filters.WillCreated()
-    const logs = await provider.getLogs({
+    const logs = await getLogsSafe({
       fromBlock,
       toBlock: currentBlock,
       address: WILL_REGISTRY_ADDRESS,
@@ -462,10 +518,10 @@ async function indexVaults() {
 
   // Backfill recent VaultCreated events
   const currentBlock = await provider.getBlockNumber()
-  const fromBlock = currentBlock > 10 ? currentBlock - 10 : 0
+  const fromBlock = currentBlock > 9 ? currentBlock - 9 : 0
 
   const filter = factory.filters.VaultCreated()
-  const logs = await provider.getLogs({
+  const logs = await getLogsSafe({
     fromBlock,
     toBlock: currentBlock,
     address: FACTORY_ADDRESS,
@@ -503,14 +559,14 @@ app.get('/api/vaults/list', async (_req, res) => {
   try {
     const factory = new ethers.Contract(FACTORY_ADDRESS, VAULT_FACTORY_ABI, provider)
     const currentBlock = await provider.getBlockNumber()
-    const fromBlock = currentBlock > 10 ? currentBlock - 10 : 0
+    const fromBlock = currentBlock > 9 ? currentBlock - 9 : 0
 
     const filter = factory.filters.VaultCreated()
-    const logs = await provider.getLogs({
+    const logs = await getLogsSafe({
       fromBlock,
       toBlock: currentBlock,
       address: FACTORY_ADDRESS,
-      topics: filter.topics
+      topics: filter.topics,
     })
 
     const iface = new ethers.Interface(VAULT_FACTORY_ABI)
@@ -770,10 +826,10 @@ app.get('/api/will/trustee/:address', async (req, res) => {
 
     // Scan TrusteeAdded events to find all wills this address is part of
     const currentBlock = await provider.getBlockNumber()
-    const fromBlock = currentBlock > 10 ? currentBlock - 10 : 0
+    const fromBlock = currentBlock > 9 ? currentBlock - 9 : 0
 
     const filter = willRegistry.filters.TrusteeAdded(null, trusteeAddr)
-    const logs = await provider.getLogs({
+    const logs = await getLogsSafe({
       fromBlock,
       toBlock: currentBlock,
       address: WILL_REGISTRY_ADDRESS,
@@ -824,10 +880,10 @@ app.get('/api/will/beneficiary/:address', async (req, res) => {
     }
 
     const currentBlock = await provider.getBlockNumber()
-    const fromBlock = currentBlock > 10 ? currentBlock - 10 : 0
+    const fromBlock = currentBlock > 9 ? currentBlock - 9 : 0
 
     const filter = willRegistry.filters.WillCreated(null, beneficiaryAddr)
-    const logs = await provider.getLogs({
+    const logs = await getLogsSafe({
       fromBlock,
       toBlock: currentBlock,
       address: WILL_REGISTRY_ADDRESS,
