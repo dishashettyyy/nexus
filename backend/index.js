@@ -134,26 +134,38 @@ if (PAYMENT_RECIPIENT && ethers.isAddress(PAYMENT_RECIPIENT)) {
     const { paymentMiddleware } = require('@x402/express')
 
     app.use(
-      paymentMiddleware(PAYMENT_RECIPIENT, {
-        'POST /api/ai/advice': {
-          price: '$0.001',
-          network: 'base-sepolia',
-          description: 'AI vault advisor — personalized recommendations',
-          asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+      paymentMiddleware(
+        PAYMENT_RECIPIENT,
+        {
+          'POST /api/ai/advice': {
+            price: '$0.001',
+            network: 'eip155:84532', // Base Sepolia
+            config: {
+              description: 'AI vault advisor — personalized recommendations',
+            },
+          },
+          'GET /api/vaults/list': {
+            price: '$0.0001',
+            network: 'eip155:84532',
+            config: {
+              description: 'Query all indexed vaults on Base Sepolia',
+            },
+          },
+          'POST /api/will/verify': {
+            price: '$0.0005',
+            network: 'eip155:84532',
+            config: {
+              description: 'Trustee ZK verification request',
+            },
+          },
         },
-        'GET /api/vaults/list': {
-          price: '$0.0001',
-          network: 'base-sepolia',
-          description: 'Query all indexed vaults on Base Sepolia',
-          asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-        },
-        'POST /api/will/verify': {
-          price: '$0.0005',
-          network: 'base-sepolia',
-          description: 'Trustee ZK verification request',
-          asset: '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
-        },
-      })
+        {
+          // Default public facilitator; can be overridden via env
+          facilitator: {
+            baseUrl: process.env.X402_FACILITATOR_URL || 'https://x402engine.app',
+          },
+        }
+      )
     )
     console.log('x402 payment middleware enabled')
   } catch (e) {
