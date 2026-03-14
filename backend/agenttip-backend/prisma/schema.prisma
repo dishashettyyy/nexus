@@ -1,0 +1,35 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Get a free hosted Postgres database in seconds: `npx create-db`
+
+generator client {
+  provider = "prisma-client"
+  output   = "./generated/client"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Creator {
+  id            String        @id @default(cuid())
+  walletAddress String        @unique
+  name          String?
+  createdAt     DateTime      @default(now())
+  transactions  Transaction[]
+}
+
+model Transaction {
+  id          String   @id @default(cuid())
+  creatorId   String
+  creator     Creator  @relation(fields: [creatorId], references: [id])
+  fromAddress String
+  amount      Float
+  currency    String   @default("USDC")
+  type        String   // "human" or "agent"
+  status      String   @default("confirmed")
+  chain       String   @default("base")
+  txHash      String?
+  createdAt   DateTime @default(now())
+}
